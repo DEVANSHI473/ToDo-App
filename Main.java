@@ -1,4 +1,4 @@
-// Main.java
+// Updated Main.java with fixes for task description handling
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -45,10 +45,21 @@ public class Main {
     
     // Convert task to JSON string
     private static String taskToJson(Task task) {
+        // Make sure description isn't null
+        String description = task.getDescription();
+        if (description == null) description = "";
+        
+        // Escape special characters for JSON
+        description = description.replace("\\", "\\\\")
+                                 .replace("\"", "\\\"")
+                                 .replace("\n", "\\n")
+                                 .replace("\r", "\\r")
+                                 .replace("\t", "\\t");
+        
         return String.format(
             "{\"id\":%d,\"description\":\"%s\",\"completed\":%b}",
             task.getId(), 
-            task.getDescription().replace("\"", "\\\""), 
+            description, 
             task.isCompleted()
         );
     }
@@ -75,7 +86,7 @@ public class Main {
                 try {
                     return Long.parseLong(idStr);
                 } catch (NumberFormatException e) {
-                    // Fall through to return -1
+                    System.err.println("Failed to parse ID: " + idStr);
                 }
             }
         }
@@ -84,18 +95,44 @@ public class Main {
     
     // Extract task description from simple JSON string
     private static String extractTaskDescription(String json) {
-    // Simple JSON parsing for: {"description":"text",...}
-    int descStart = json.indexOf("\"description\":\"");
-    if (descStart >= 0) {
-        descStart += 14; // Move past "description":"
-        int descEnd = json.indexOf("\"", descStart);
-        if (descEnd >= 0) {
-            String description = json.substring(descStart, descEnd);
-            // Handle escaped quotes
-            description = description.replace("\\\"", "\"");
-            return description;
+        System.out.println("Parsing JSON: " + json); // Debug output
+        
+        // Simple JSON parsing for: {"description":"text",...}
+        int descStart = json.indexOf("\"description\":\"");
+        if (descStart >= 0) {
+            descStart += 15; // Move past "description":"
+            int descEnd = -1;
+            boolean inEscape = false;
+            
+            // Find the closing quote, handling escaped characters
+            for (int i = descStart; i < json.length(); i++) {
+                char c = json.charAt(i);
+                if (inEscape) {
+                    inEscape = false;
+                } else if (c == '\\') {
+                    inEscape = true;
+                } else if (c == '"') {
+                    descEnd = i;
+                    break;
+                }
+            }
+            
+            if (descEnd >= 0) {
+                String description = json.substring(descStart, descEnd);
+                // Unescape special characters
+                description = description.replace("\\\"", "\"")
+                                         .replace("\\\\", "\\")
+                                         .replace("\\n", "\n")
+                                         .replace("\\r", "\r")
+                                         .replace("\\t", "\t");
+                System.out.println("Extracted description: " + description); // Debug output
+                return description;
+            }
         }
+        System.out.println("Failed to extract description"); // Debug output
+        return "";
     }
+    
     // Load tasks from file
     private static void loadTasks() {
         try {
@@ -104,16 +141,20 @@ public class Main {
                 for (String line : lines) {
                     String[] parts = line.split("\\|", 3);
                     if (parts.length == 3) {
-                        long id = Long.parseLong(parts[0]);
-                        String description = parts[1];
-                        boolean completed = Boolean.parseBoolean(parts[2]);
-                        
-                        Task task = new Task(id, description);
-                        task.setCompleted(completed);
-                        tasks.add(task);
-                        
-                        if (id >= taskIdCounter) {
-                            taskIdCounter = id + 1;
+                        try {
+                            long id = Long.parseLong(parts[0]);
+                            String description = parts[1];
+                            boolean completed = Boolean.parseBoolean(parts[2]);
+                            
+                            Task task = new Task(id, description);
+                            task.setCompleted(completed);
+                            tasks.add(task);
+                            
+                            if (id >= taskIdCounter) {
+                                taskIdCounter = id + 1;
+                            }
+                        } catch (Exception e) {
+                            System.err.println("Error parsing task line: " + line);
                         }
                     }
                 }
@@ -128,7 +169,13 @@ public class Main {
     private static void saveTasks() {
         try {
             List<String> lines = tasks.stream()
-                .map(task -> task.getId() + "|" + task.getDescription() + "|" + task.isCompleted())
+                .map(task -> {
+                    String description = task.getDescription();
+                    if (description == null) description = "";
+                    // Replace | with a safe character since we use it as delimiter
+                    description = description.replace("|", "&#124;");
+                    return task.getId() + "|" + description + "|" + task.isCompleted();
+                })
                 .collect(Collectors.toList());
             Files.write(Paths.get(DATA_FILE), lines);
         } catch (IOException e) {
@@ -164,37 +211,22 @@ public class Main {
     }
     
     // Handler for getting all tasks
-    static class AddTaskHandler implements HttpHandler {
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        if ("POST".equals(exchange.getRequestMethod())) {
-            // Read request body
-            String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            System.out.println("Received add request: " + requestBody);
-            
-            String description = extractTaskDescription(requestBody);
-            System.out.println("Extracted description: '" + description + "'");
-            
-            // Create and add the new task
-            Task newTask = new Task(taskIdCounter++, description);
-            tasks.add(newTask);
-            saveTasks();
-            
-            // Return the created task
-            String response = taskToJson(newTask);
-            System.out.println("Sending response: " + response);
-            
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(201, response.length());
-            
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes());
+    static class TasksHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                String response = tasksToJson(tasks);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length());
+                
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(response.getBytes());
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1); // Method not allowed
             }
-        } else {
-            exchange.sendResponseHeaders(405, -1); // Method not allowed
         }
     }
-}
     
     // Handler for adding a new task
     static class AddTaskHandler implements HttpHandler {
@@ -204,6 +236,11 @@ public class Main {
                 // Read request body
                 String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 String description = extractTaskDescription(requestBody);
+                
+                if (description == null || description.isEmpty()) {
+                    System.err.println("WARNING: Empty task description received");
+                    description = "Untitled Task";
+                }
                 
                 // Create and add the new task
                 Task newTask = new Task(taskIdCounter++, description);
@@ -258,11 +295,6 @@ public class Main {
             }
         }
     }
-   
-    
-    System.err.println("Failed to extract description from: " + json);
-    return "Untitled Task"; // Default value if parsing fails
-}
     
     // Handler for deleting a task
     static class DeleteTaskHandler implements HttpHandler {

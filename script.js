@@ -1,3 +1,4 @@
+// Fixed script.js
 document.addEventListener('DOMContentLoaded', function() {
     const taskForm = document.getElementById('task-form');
     const taskInput = document.getElementById('task-input');
@@ -23,7 +24,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/tasks')
             .then(response => response.json())
             .then(tasks => {
-                console.log("Loaded tasks:", tasks); // Debug: Check what tasks are loaded
+                console.log("Loaded tasks:", tasks); // Debug: Log the received tasks
                 renderTasks(tasks);
             })
             .catch(error => {
@@ -45,19 +46,13 @@ document.addEventListener('DOMContentLoaded', function() {
         emptyState.style.display = 'none';
         
         tasks.forEach(task => {
-            console.log("Rendering task:", task); // Debug: Check each task being rendered
-            
             const taskItem = document.createElement('li');
             taskItem.className = `task-item ${task.completed ? 'completed' : ''}`;
             taskItem.dataset.id = task.id;
             
-            // Make sure the task text is clearly visible with proper styling
-            const taskText = document.createElement('div'); // Changed from span to div for better visibility
+            const taskText = document.createElement('span');
             taskText.className = 'task-text';
-            taskText.textContent = task.description || "Untitled Task"; // Fallback if description is missing
-            taskText.style.fontSize = '16px'; // Ensure text is reasonably sized
-            taskText.style.flex = '1'; // Take up available space
-            taskText.style.padding = '5px 0'; // Add some padding
+            taskText.textContent = task.description || "Untitled Task";
             
             const taskActions = document.createElement('div');
             taskActions.className = 'task-actions';
@@ -84,20 +79,18 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Function to add a new task
     function addTask(description) {
-        console.log("Adding task:", description); // Debug: Check what's being sent
-        
-        const newTask = { description };
+        console.log("Adding task with description:", description); // Debug: Log the description being sent
         
         fetch('/api/tasks/add', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(newTask)
+            body: JSON.stringify({ description: description })
         })
         .then(response => response.json())
         .then(task => {
-            console.log("Task added:", task); // Debug: Check server response
+            console.log("Task added:", task); // Debug: Log the response
             // Reload all tasks to ensure we have the latest state
             loadTasks();
         })
